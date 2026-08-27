@@ -8,6 +8,9 @@ on:
   release:
     types: [published]
 
+
+permissions:
+  contents: write
 jobs:
   build:
     name: "Build: ${{ matrix.arch }}"
@@ -57,3 +60,14 @@ jobs:
           # Use a wildcard to force a subfolder
           path: "build/*-emu/"
           if-no-files-found: error
+
+    - name: Package release zip
+      if: github.event_name == 'release'
+      shell: pwsh
+      run: Compress-Archive -Path build/firebird-emu -DestinationPath firebird-emu-${{ matrix.arch }}.zip -Force
+
+    - name: Attach zip to GitHub release
+      if: github.event_name == 'release'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release upload "${{ github.event.release.tag_name }}" "firebird-emu-${{ matrix.arch }}.zip" --repo "${{ github.repository }}" --clobber
