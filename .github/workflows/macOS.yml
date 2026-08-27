@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macOS-latest]
+        os: [macOS-13]
 
     steps:
     - name: Checkout Git Repo
