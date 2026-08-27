@@ -33,6 +33,8 @@ MainWindow::MainWindow(QWidget *parent) :
 {
     ui->setupUi(this);
     ui->statusBar->addWidget(&status_label);
+    ui->statusBar->addPermanentWidget(&keypad_macro_status_label);
+    keypad_macro_status_label.setVisible(false);
 
     // Register QtKeypadBridge for the virtual keyboard functionality
     ui->keypadWidget->installEventFilter(&qt_keypad_bridge);
@@ -101,6 +103,7 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(ui->actionLeavePTT, &QAction::triggered, the_qml_bridge, &QMLBridge::sendExitPTT);
     ui->actionConnect->setShortcut(QKeySequence(Qt::Key_F10));
     ui->actionConnect->setAutoRepeat(false);
+    connect(ui->menuKeypadMacros, &QMenu::aboutToShow, this, &MainWindow::refillKeypadMacroMenu);
 
     //Menu "State"
     connect(ui->actionResume, SIGNAL(triggered()), this, SLOT(resume()));
@@ -123,7 +126,12 @@ MainWindow::MainWindow(QWidget *parent) :
     {
         languageCode.chop(3); // Chop off file extension
         QLocale locale(languageCode);
-        QAction *action = new QAction(locale.nativeLanguageName(), ui->menuLanguage);
+        QString languageName = locale.nativeLanguageName();
+        if(languageCode == QStringLiteral("zh_CN"))
+            languageName = QStringLiteral("简体中文");
+        else if(languageCode == QStringLiteral("zh_HK"))
+            languageName = QStringLiteral("繁體粵語");
+        QAction *action = new QAction(languageName, ui->menuLanguage);
         connect(action, &QAction::triggered, this, [this,languageCode] { this->switchTranslator(languageCode); });
         ui->menuLanguage->addAction(action);
     }
@@ -142,6 +150,18 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(model, SIGNAL(anythingChanged()), this, SLOT(kitAnythingChanged()));
     connect(model, SIGNAL(dataChanged(QModelIndex,QModelIndex,QVector<int>)), this, SLOT(kitDataChanged(QModelIndex,QModelIndex,QVector<int>)));
     connect(the_qml_bridge, SIGNAL(currentKitChanged(const Kit&)), this, SLOT(currentKitChanged(const Kit &)));
+    connect(the_qml_bridge->getKeypadMacroModel(), &KeypadMacroModel::anythingChanged,
+            this, &MainWindow::refillKeypadMacroMenu);
+    connect(the_qml_bridge, &QMLBridge::keypadMacroRecordingChanged,
+            this, &MainWindow::refillKeypadMacroMenu);
+    connect(the_qml_bridge, &QMLBridge::keypadMacroPlayingChanged,
+            this, &MainWindow::refillKeypadMacroMenu);
+    connect(the_qml_bridge, &QMLBridge::keypadMacroRecordingChanged,
+            this, &MainWindow::updateKeypadMacroStatus);
+    connect(the_qml_bridge, &QMLBridge::keypadMacroPlayingChanged,
+            this, &MainWindow::updateKeypadMacroStatus);
+    connect(the_qml_bridge, &QMLBridge::activeKeypadMacroNameChanged,
+            this, &MainWindow::updateKeypadMacroStatus);
 
     //Set up monospace fonts
     QFont monospace = QFontDatabase::systemFont(QFontDatabase::FixedFont);
@@ -178,6 +198,8 @@ MainWindow::MainWindow(QWidget *parent) :
     restoreState(settings->value(QStringLiteral("windowState")).toByteArray(), WindowStateVersion);
 
     refillKitMenus();
+    refillKeypadMacroMenu();
+    updateKeypadMacroStatus();
 
     ui->lcdView->setFocus();
 
@@ -274,6 +296,8 @@ void MainWindow::changeEvent(QEvent* event)
         ui->retranslateUi(this);
         updateWindowTitle();
         retranslateDocks();
+        refillKeypadMacroMenu();
+        updateKeypadMacroStatus();
     }
     else if (eventType == QEvent::LocaleChange)
         switchTranslator(QLocale::system());
@@ -503,6 +527,7 @@ void MainWindow::updateUIActionState(bool emulation_running)
     ui->actionSave->setEnabled(emulation_running);
 
     ui->buttonSpeed->setEnabled(emulation_running);
+    refillKeypadMacroMenu();
 }
 
 void MainWindow::raiseDebugger()
@@ -847,6 +872,56 @@ void MainWindow::refillKitMenus()
         action->setData(kit.id);
         connect(action, SIGNAL(triggered()), this, SLOT(startKitDiags()));
 	}
+}
+
+void MainWindow::refillKeypadMacroMenu()
+{
+    ui->menuKeypadMacros->clear();
+
+    if(the_qml_bridge->isKeypadMacroRecording())
+    {
+        QAction *action = ui->menuKeypadMacros->addAction(
+                    tr("Recording: %1").arg(the_qml_bridge->getActiveKeypadMacroName()));
+        action->setEnabled(false);
+        return;
+    }
+
+    if(the_qml_bridge->isKeypadMacroPlaying())
+    {
+        QAction *action = ui->menuKeypadMacros->addAction(tr("Stop Playback"));
+        connect(action, &QAction::triggered, the_qml_bridge, &QMLBridge::stopKeypadMacroPlayback);
+        return;
+    }
+
+    KeypadMacroModel *model = the_qml_bridge->getKeypadMacroModel();
+    if(model->rowCount() == 0)
+    {
+        QAction *action = ui->menuKeypadMacros->addAction(tr("No saved keypad macros"));
+        action->setEnabled(false);
+        return;
+    }
+
+    for(int row = 0; row < model->rowCount(); ++row)
+    {
+        QAction *action = ui->menuKeypadMacros->addAction(
+                    model->getDataRow(row, KeypadMacroModel::NameRole).toString());
+        action->setEnabled(emu_thread.isRunning());
+        connect(action, &QAction::triggered, this, [row]() {
+            the_qml_bridge->playKeypadMacro(row);
+        });
+    }
+}
+
+void MainWindow::updateKeypadMacroStatus()
+{
+    QString text;
+    if(the_qml_bridge->isKeypadMacroRecording())
+        text = tr("Macro recording: %1").arg(the_qml_bridge->getActiveKeypadMacroName());
+    else if(the_qml_bridge->isKeypadMacroPlaying())
+        text = tr("Macro playing: %1").arg(the_qml_bridge->getActiveKeypadMacroName());
+
+    keypad_macro_status_label.setText(text);
+    keypad_macro_status_label.setVisible(!text.isEmpty());
 }
 
 void MainWindow::updateWindowTitle()

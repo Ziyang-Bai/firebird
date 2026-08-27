@@ -22,6 +22,7 @@ signals:
     void suspended(bool success);
     void stopped();
     void paused(bool b);
+    void inputStateInvalidated();
 
     // I/O
     void serialChar(char c);

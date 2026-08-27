@@ -27,6 +27,14 @@ jobs:
           sudo apt update
           sudo apt install -y qtbase5-dev qtdeclarative5-dev
 
+      - name: Test keypad macros
+        run: |
+          mkdir build-keypadmacrotest
+          cd build-keypadmacrotest
+          qmake ../tests/keypadmacrotest.pro
+          make -j4
+          ./keypadmacrotest -v1
+
       - name: Build firebird-headless
         working-directory: headless
         run: make -j8

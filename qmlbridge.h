@@ -5,6 +5,7 @@
 #include <QtQml>
 
 #include "kitmodel.h"
+#include "keypadmacro.h"
 
 class QMLBridge : public QObject
 {
@@ -28,6 +29,10 @@ public:
     Q_PROPERTY(QString version READ getVersion CONSTANT)
     Q_PROPERTY(bool isRunning READ getIsRunning NOTIFY isRunningChanged)
     Q_PROPERTY(KitModel* kits READ getKitModel CONSTANT)
+    Q_PROPERTY(KeypadMacroModel* keypadMacros READ getKeypadMacroModel CONSTANT)
+    Q_PROPERTY(bool keypadMacroRecording READ isKeypadMacroRecording NOTIFY keypadMacroRecordingChanged)
+    Q_PROPERTY(bool keypadMacroPlaying READ isKeypadMacroPlaying NOTIFY keypadMacroPlayingChanged)
+    Q_PROPERTY(QString activeKeypadMacroName READ getActiveKeypadMacroName NOTIFY activeKeypadMacroNameChanged)
 
     Q_PROPERTY(double speed READ getSpeed NOTIFY speedChanged)
     Q_PROPERTY(bool turboMode READ getTurboMode WRITE setTurboMode NOTIFY turboModeChanged)
@@ -78,6 +83,23 @@ public:
     void setMobileHeight(int h);
 
     KitModel *getKitModel() { return &kit_model; }
+    KeypadMacroModel *getKeypadMacroModel() { return &keypad_macro_model; }
+    bool isKeypadMacroRecording() const { return keypad_macro_recording; }
+    bool isKeypadMacroPlaying() const { return keypad_macro_playing; }
+    QString getActiveKeypadMacroName() const { return active_keypad_macro_name; }
+    Q_INVOKABLE bool startKeypadMacroRecording(QString name);
+    Q_INVOKABLE bool stopKeypadMacroRecording();
+    Q_INVOKABLE void cancelKeypadMacroRecording();
+    Q_INVOKABLE bool playKeypadMacro(int row);
+    Q_INVOKABLE void stopKeypadMacroPlayback();
+    Q_INVOKABLE bool renameKeypadMacro(int row, QString name);
+    Q_INVOKABLE bool deleteKeypadMacro(int row);
+    Q_INVOKABLE bool isKeypadMacroNameAvailable(QString name, int exceptRow) const;
+    Q_INVOKABLE QString keypadMacroCode(int row) const;
+    Q_INVOKABLE QString validateKeypadMacroCode(QString code) const;
+    Q_INVOKABLE bool createKeypadMacroFromCode(QString name, QString code);
+    Q_INVOKABLE bool replaceKeypadMacroFromCode(int row, QString code);
+    Q_INVOKABLE bool updateKeypadMacroFromCode(int row, QString name, QString code);
     Q_INVOKABLE void setButtonState(int id, bool state);
 
     // Coordinates: (0/0) = top left (1/1) = bottom right
@@ -126,11 +148,12 @@ public:
 
     void setActive(bool b);
 
-    void notifyButtonStateChanged(int row, int col, bool state);
-    void touchpadStateChanged();
 
 public slots:
     void saveKits();
+    void saveKeypadMacros();
+    void invalidateInputState();
+    void keypadMacroPlaybackFinished();
     void speedChanged(double speed);
     void started(bool success); // Not called on resume
     void resumed(bool success);
@@ -153,6 +176,9 @@ signals:
     void speedChanged();
     void turboModeChanged();
 
+    void keypadMacroRecordingChanged();
+    void keypadMacroPlayingChanged();
+    void activeKeypadMacroNameChanged();
     void currentKitChanged(const Kit &kit);
 
     void emuSuspended(bool success);
@@ -168,6 +194,18 @@ signals:
     void neverEmitted();
 
 private:
+    enum class InputOrigin { Manual, Playback };
+
+    void applyButtonState(int id, bool state, InputOrigin origin);
+    void applyTouchpadState(qreal x, qreal y, bool contact, bool down, InputOrigin origin);
+    void clearInputState();
+    bool inputStateIsEmpty() const;
+    void setKeypadMacroRecording(bool recording);
+    void setKeypadMacroPlaying(bool playing);
+    void setActiveKeypadMacroName(const QString &name);
+    bool finishKeypadMacroRecording(bool automatic);
+    void cancelKeypadMacroPlayback(const QString &message = QString());
+
     static void usblink_progress_changed(int percent, void *qml_bridge_p);
 
     int current_kit_id = -1;
@@ -175,6 +213,17 @@ private:
 
     double speed = 0;
     KitModel kit_model;
+    KeypadMacroModel keypad_macro_model;
+    KeypadMacroController keypad_macro_controller;
+    QSet<int> active_buttons;
+    qreal active_touch_x = 0.0;
+    qreal active_touch_y = 0.0;
+    bool active_touch_contact = false;
+    bool active_touch_down = false;
+    bool keypad_macro_recording = false;
+    bool keypad_macro_playing = false;
+    bool keypad_macro_playback_cancel_requested = false;
+    QString active_keypad_macro_name;
     QSettings settings;
     bool is_active = false;
 };

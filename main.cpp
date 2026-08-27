@@ -13,6 +13,7 @@
 #include "qtframebuffer.h"
 #include "qmlbridge.h"
 #include "kitmodel.h"
+#include "keypadmacro.h"
 
 #if !defined(NO_TRANSLATION) && defined(IS_IOS_BUILD)
 #include <unistd.h>
@@ -106,6 +107,8 @@ int main(int argc, char **argv)
     // Needed for settings migration
     qRegisterMetaTypeStreamOperators<KitModel>();
     qRegisterMetaType<KitModel>();
+    qRegisterMetaTypeStreamOperators<KeypadMacroModel>();
+    qRegisterMetaType<KeypadMacroModel>();
 
     migrateSettings();
 
@@ -120,6 +123,7 @@ int main(int argc, char **argv)
     qmlRegisterType<QMLFramebuffer>("Firebird.Emu", 1, 0, "EmuScreen");
     // Register KitModel
     qmlRegisterType<KitModel>("Firebird.Emu", 1, 0, "KitModel");
+    qmlRegisterType<KeypadMacroModel>("Firebird.Emu", 1, 0, "KeypadMacroModel");
 
     #ifndef MOBILE_UI
         MainWindow mw;

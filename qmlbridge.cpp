@@ -1,5 +1,6 @@
 #include <cassert>
 #include <unistd.h>
+#include <cmath>
 
 #include <QUrl>
 
@@ -55,6 +56,9 @@ QMLBridge::QMLBridge(QObject *parent) : QObject(parent)
                      settings.value(QStringLiteral("snapshotPath")).toString());
     }
 
+    if(settings.contains(QStringLiteral("keypadMacros")))
+        keypad_macro_model = settings.value(QStringLiteral("keypadMacros")).value<KeypadMacroModel>();
+
     // Same for debug_on_*
     debug_on_start = getDebugOnStart();
     debug_on_warn = getDebugOnWarn();
@@ -62,12 +66,34 @@ QMLBridge::QMLBridge(QObject *parent) : QObject(parent)
     print_on_warn = getPrintOnWarn();
 
     connect(&kit_model, SIGNAL(anythingChanged()), this, SLOT(saveKits()), Qt::QueuedConnection);
+    connect(&keypad_macro_model, SIGNAL(anythingChanged()), this, SLOT(saveKeypadMacros()), Qt::QueuedConnection);
+    connect(&keypad_macro_controller, &KeypadMacroController::playbackButtonState,
+            this, [this](int id, bool state) {
+        applyButtonState(id, state, InputOrigin::Playback);
+    });
+    connect(&keypad_macro_controller, &KeypadMacroController::playbackTouchpadState,
+            this, [this](double x, double y, bool contact, bool down) {
+        applyTouchpadState(x, y, contact, down, InputOrigin::Playback);
+    });
+    connect(&keypad_macro_controller, &KeypadMacroController::playbackFinished,
+            this, &QMLBridge::keypadMacroPlaybackFinished);
+    connect(&emu_thread, &EmuThread::inputStateInvalidated,
+            this, &QMLBridge::invalidateInputState);
+    connect(&emu_thread, &EmuThread::stopped,
+            this, &QMLBridge::invalidateInputState, Qt::QueuedConnection);
+    connect(&emu_thread, &EmuThread::debuggerEntered, this, [this](bool entered) {
+        if(entered)
+            invalidateInputState();
+    }, Qt::QueuedConnection);
 
     setActive(true);
 }
 
 QMLBridge::~QMLBridge()
-{}
+{
+    invalidateInputState();
+    the_qml_bridge = nullptr;
+}
 
 unsigned int QMLBridge::getGDBPort()
 {
@@ -254,26 +280,69 @@ QString QMLBridge::getVersion()
 
 void QMLBridge::setButtonState(int id, bool state)
 {
-    int col = id % KEYPAD_COLS, row = id / KEYPAD_COLS;
+    if(id < 0 || id >= KEYPAD_ROWS * KEYPAD_COLS)
+        return;
+
+    if(keypad_macro_playing)
+        cancelKeypadMacroPlayback(tr("Keypad macro playback cancelled"));
+    applyButtonState(id, state, InputOrigin::Manual);
+}
+
+void QMLBridge::applyButtonState(int id, bool state, InputOrigin origin)
+{
+    if(id < 0 || id >= KEYPAD_ROWS * KEYPAD_COLS || active_buttons.contains(id) == state)
+        return;
+
+    if(state)
+        active_buttons.insert(id);
+    else
+        active_buttons.remove(id);
+
+    if(origin == InputOrigin::Manual)
+        keypad_macro_controller.captureButton(id, state);
 
 #ifdef Q_OS_ANDROID
-    if (state)
+    if(origin == InputOrigin::Manual && state)
         androidVibrate();
 #endif
 
-    ::keypad_set_key(row, col, state);
+    ::keypad_set_key(id / KEYPAD_COLS, id % KEYPAD_COLS, state);
+    emit buttonStateChanged(id, state);
 }
 
 void QMLBridge::setTouchpadState(qreal x, qreal y, bool contact, bool down)
 {
-    ::touchpad_set_state(x, y, contact, down);
+    if(!std::isfinite(static_cast<double>(x)) || !std::isfinite(static_cast<double>(y)))
+        return;
+    x = qBound<qreal>(0.0, x, 1.0);
+    y = qBound<qreal>(0.0, y, 1.0);
+
+    if(keypad_macro_playing)
+        cancelKeypadMacroPlayback(tr("Keypad macro playback cancelled"));
+    applyTouchpadState(x, y, contact, down, InputOrigin::Manual);
+}
+
+void QMLBridge::applyTouchpadState(qreal x, qreal y, bool contact, bool down, InputOrigin origin)
+{
+    if(active_touch_x == x && active_touch_y == y &&
+       active_touch_contact == contact && active_touch_down == down)
+        return;
+
+    active_touch_x = x;
+    active_touch_y = y;
+    active_touch_contact = contact;
+    active_touch_down = down;
+
+    if(origin == InputOrigin::Manual)
+        keypad_macro_controller.captureTouchpad(x, y, contact, down);
 
 #ifdef Q_OS_ANDROID
-    if (down)
+    if(origin == InputOrigin::Manual && down)
         androidVibrate();
 #endif
 
-    touchpadStateChanged();
+    ::touchpad_set_state(x, y, contact, down);
+    emit touchpadStateChanged(x, y, contact, down);
 }
 
 bool QMLBridge::isMobile()
@@ -465,6 +534,338 @@ void QMLBridge::setActive(bool b)
 void QMLBridge::saveKits()
 {
     settings.setValue(QStringLiteral("kits"), QVariant::fromValue(kit_model));
+}
+
+void QMLBridge::saveKeypadMacros()
+{
+    settings.setValue(QStringLiteral("keypadMacros"), QVariant::fromValue(keypad_macro_model));
+}
+
+void QMLBridge::setKeypadMacroRecording(bool recording)
+{
+    if(keypad_macro_recording == recording)
+        return;
+    keypad_macro_recording = recording;
+    keypad_macro_model.setMutationLocked(keypad_macro_recording || keypad_macro_playing);
+    emit keypadMacroRecordingChanged();
+}
+
+void QMLBridge::setKeypadMacroPlaying(bool playing)
+{
+    if(keypad_macro_playing == playing)
+        return;
+    keypad_macro_playing = playing;
+    keypad_macro_model.setMutationLocked(keypad_macro_recording || keypad_macro_playing);
+    emit keypadMacroPlayingChanged();
+}
+
+void QMLBridge::setActiveKeypadMacroName(const QString &name)
+{
+    if(active_keypad_macro_name == name)
+        return;
+    active_keypad_macro_name = name;
+    emit activeKeypadMacroNameChanged();
+}
+
+bool QMLBridge::inputStateIsEmpty() const
+{
+    return active_buttons.isEmpty() && !active_touch_contact && !active_touch_down;
+}
+
+void QMLBridge::clearInputState()
+{
+    const QList<int> buttons = active_buttons.values();
+    active_buttons.clear();
+    for(int id : buttons)
+        emit buttonStateChanged(id, false);
+
+    const bool touchWasActive = active_touch_contact || active_touch_down;
+    active_touch_x = active_touch_y = 0.0;
+    active_touch_contact = active_touch_down = false;
+    if(touchWasActive)
+        emit touchpadStateChanged(0.0, 0.0, false, false);
+
+    for(int id = 0; id < KEYPAD_ROWS * KEYPAD_COLS; ++id)
+        ::keypad_set_key(id / KEYPAD_COLS, id % KEYPAD_COLS, false);
+    ::touchpad_set_state(0.0, 0.0, false, false);
+}
+
+bool QMLBridge::startKeypadMacroRecording(QString name)
+{
+    name = name.trimmed();
+    if(!emu_thread.isRunning() || keypad_macro_recording || keypad_macro_playing ||
+       !keypad_macro_model.isNameAvailable(name, -1))
+        return false;
+    if(!inputStateIsEmpty())
+    {
+        emit toastMessage(tr("Release all calculator inputs first"));
+        return false;
+    }
+
+    clearInputState();
+    keypad_macro_controller.startRecording();
+    setActiveKeypadMacroName(name);
+    setKeypadMacroRecording(true);
+    emit toastMessage(tr("Recording keypad macro %1").arg(name));
+    return true;
+}
+
+bool QMLBridge::finishKeypadMacroRecording(bool automatic)
+{
+    if(!keypad_macro_recording)
+        return false;
+
+    QVector<KeypadMacroEvent> events;
+    const bool hasEvents = keypad_macro_controller.stopRecording(&events);
+    const QString name = active_keypad_macro_name;
+    bool saved = false;
+    if(hasEvents)
+        saved = keypad_macro_model.addMacro(name, events) >= 0;
+
+    setKeypadMacroRecording(false);
+    setActiveKeypadMacroName(QString());
+
+    if(saved)
+    {
+        emit toastMessage(automatic
+                          ? tr("Keypad macro %1 was saved automatically").arg(name)
+                          : tr("Keypad macro %1 saved").arg(name));
+    }
+    else
+        emit toastMessage(tr("No calculator input was recorded"));
+    return saved;
+}
+
+bool QMLBridge::stopKeypadMacroRecording()
+{
+    return finishKeypadMacroRecording(false);
+}
+
+void QMLBridge::cancelKeypadMacroRecording()
+{
+    if(!keypad_macro_recording)
+        return;
+    const QString name = active_keypad_macro_name;
+    keypad_macro_controller.cancelRecording();
+    setKeypadMacroRecording(false);
+    setActiveKeypadMacroName(QString());
+    emit toastMessage(tr("Keypad macro %1 cancelled").arg(name));
+}
+
+bool QMLBridge::playKeypadMacro(int row)
+{
+    if(!emu_thread.isRunning())
+    {
+        emit toastMessage(tr("Start emulation before playing a keypad macro"));
+        return false;
+    }
+    if(keypad_macro_recording || keypad_macro_playing)
+    {
+        emit toastMessage(tr("Stop the active keypad macro first"));
+        return false;
+    }
+
+    const KeypadMacro *macro = keypad_macro_model.macroAt(row);
+    if(!macro)
+    {
+        emit toastMessage(tr("Select a keypad macro first"));
+        return false;
+    }
+    if(!inputStateIsEmpty())
+    {
+        emit toastMessage(tr("Release all calculator inputs first"));
+        return false;
+    }
+
+    const QString name = macro->name;
+    const QVector<KeypadMacroEvent> events = macro->events;
+    clearInputState();
+    setActiveKeypadMacroName(name);
+    setKeypadMacroPlaying(true);
+    keypad_macro_playback_cancel_requested = false;
+    keypad_macro_controller.startPlayback(events);
+    emit toastMessage(tr("Playing keypad macro %1").arg(name));
+    return true;
+}
+
+void QMLBridge::cancelKeypadMacroPlayback(const QString &message)
+{
+    if(!keypad_macro_playing)
+        return;
+    keypad_macro_playback_cancel_requested = true;
+    keypad_macro_controller.cancelPlayback();
+    if(!message.isEmpty())
+        emit toastMessage(message);
+}
+
+void QMLBridge::stopKeypadMacroPlayback()
+{
+    cancelKeypadMacroPlayback(tr("Keypad macro playback stopped"));
+}
+
+void QMLBridge::keypadMacroPlaybackFinished()
+{
+    if(!keypad_macro_playing)
+        return;
+
+    const bool cancelled = keypad_macro_playback_cancel_requested;
+    keypad_macro_playback_cancel_requested = false;
+    const QString name = active_keypad_macro_name;
+    setKeypadMacroPlaying(false);
+    setActiveKeypadMacroName(QString());
+    if(!cancelled)
+        emit toastMessage(tr("Keypad macro %1 finished").arg(name));
+}
+
+bool QMLBridge::renameKeypadMacro(int row, QString name)
+{
+    if(keypad_macro_recording || keypad_macro_playing)
+    {
+        emit toastMessage(tr("Stop the active keypad macro first"));
+        return false;
+    }
+    keypad_macro_model.setMutationLocked(false);
+    if(!keypad_macro_model.rename(row, name))
+        return false;
+    emit toastMessage(tr("Keypad macro renamed"));
+    return true;
+}
+
+bool QMLBridge::deleteKeypadMacro(int row)
+{
+    if(keypad_macro_recording || keypad_macro_playing)
+    {
+        emit toastMessage(tr("Stop the active keypad macro first"));
+        return false;
+    }
+    const KeypadMacro *macro = keypad_macro_model.macroAt(row);
+    if(!macro)
+    {
+        emit toastMessage(tr("Select a keypad macro first"));
+        return false;
+    }
+    const QString name = macro->name;
+    keypad_macro_model.setMutationLocked(false);
+    if(!keypad_macro_model.remove(row))
+        return false;
+    emit toastMessage(tr("Keypad macro %1 deleted").arg(name));
+    return true;
+}
+
+bool QMLBridge::isKeypadMacroNameAvailable(QString name, int exceptRow) const
+{
+    return keypad_macro_model.isNameAvailable(name, exceptRow);
+}
+
+QString QMLBridge::keypadMacroCode(int row) const
+{
+    const KeypadMacro *macro = keypad_macro_model.macroAt(row);
+    return macro ? KeypadMacroScript::format(macro->events) : QString();
+}
+
+QString QMLBridge::validateKeypadMacroCode(QString code) const
+{
+    QString error;
+    KeypadMacroScript::parse(code, nullptr, &error);
+    return error;
+}
+
+bool QMLBridge::createKeypadMacroFromCode(QString name, QString code)
+{
+    name = name.trimmed();
+    if(keypad_macro_recording || keypad_macro_playing)
+    {
+        emit toastMessage(tr("Stop the active keypad macro first"));
+        return false;
+    }
+    if(!keypad_macro_model.isNameAvailable(name, -1))
+    {
+        emit toastMessage(tr("Enter a unique keypad macro name"));
+        return false;
+    }
+
+    QVector<KeypadMacroEvent> events;
+    QString error;
+    if(!KeypadMacroScript::parse(code, &events, &error))
+    {
+        emit toastMessage(tr("Invalid keypad macro code: %1").arg(error));
+        return false;
+    }
+
+    keypad_macro_model.setMutationLocked(false);
+    if(keypad_macro_model.addMacro(name, events) < 0)
+        return false;
+    emit toastMessage(tr("Keypad macro %1 created").arg(name));
+    return true;
+}
+
+bool QMLBridge::replaceKeypadMacroFromCode(int row, QString code)
+{
+    if(keypad_macro_recording || keypad_macro_playing)
+    {
+        emit toastMessage(tr("Stop the active keypad macro first"));
+        return false;
+    }
+
+    const KeypadMacro *macro = keypad_macro_model.macroAt(row);
+    if(!macro)
+    {
+        emit toastMessage(tr("Select a keypad macro first"));
+        return false;
+    }
+
+    QVector<KeypadMacroEvent> events;
+    QString error;
+    if(!KeypadMacroScript::parse(code, &events, &error))
+    {
+        emit toastMessage(tr("Invalid keypad macro code: %1").arg(error));
+        return false;
+    }
+
+    const QString name = macro->name;
+    keypad_macro_model.setMutationLocked(false);
+    if(!keypad_macro_model.replaceMacroEvents(row, events))
+        return false;
+    emit toastMessage(tr("Keypad macro %1 updated").arg(name));
+    return true;
+}
+
+bool QMLBridge::updateKeypadMacroFromCode(int row, QString name, QString code)
+{
+    name = name.trimmed();
+    if(keypad_macro_recording || keypad_macro_playing)
+    {
+        emit toastMessage(tr("Stop the active keypad macro first"));
+        return false;
+    }
+    if(!keypad_macro_model.isNameAvailable(name, row))
+    {
+        emit toastMessage(tr("Enter a unique keypad macro name"));
+        return false;
+    }
+
+    QVector<KeypadMacroEvent> events;
+    QString error;
+    if(!KeypadMacroScript::parse(code, &events, &error))
+    {
+        emit toastMessage(tr("Invalid keypad macro code: %1").arg(error));
+        return false;
+    }
+
+    keypad_macro_model.setMutationLocked(false);
+    if(!keypad_macro_model.updateMacro(row, name, events))
+        return false;
+    emit toastMessage(tr("Keypad macro %1 updated").arg(name));
+    return true;
+}
+
+void QMLBridge::invalidateInputState()
+{
+    if(keypad_macro_playing)
+        cancelKeypadMacroPlayback(tr("Keypad macro playback cancelled"));
+    if(keypad_macro_recording)
+        finishKeypadMacroRecording(true);
+    clearInputState();
 }
 
 void QMLBridge::usblink_progress_changed(int percent, void *qml_bridge_p)
@@ -694,17 +1095,4 @@ double QMLBridge::getSpeed()
 bool QMLBridge::getTurboMode()
 {
     return turbo_mode;
-}
-
-void QMLBridge::notifyButtonStateChanged(int row, int col, bool state)
-{
-    assert(row < KEYPAD_ROWS);
-    assert(col < KEYPAD_COLS);
-
-    emit buttonStateChanged(col + row * KEYPAD_COLS, state);
-}
-
-void QMLBridge::touchpadStateChanged()
-{
-    touchpadStateChanged(float(keypad.touchpad_x)/TOUCHPAD_X_MAX, 1.0f-(float(keypad.touchpad_y)/TOUCHPAD_Y_MAX), keypad.touchpad_contact, keypad.touchpad_down);
 }

@@ -1,6 +1,4 @@
 #include "lcdwidget.h"
-#include "core/keypad.h"
-#include "qtkeypadbridge.h"
 #include "qmlbridge.h"
 #include "qtframebuffer.h"
 
@@ -16,24 +14,29 @@ LCDWidget::LCDWidget(QWidget *parent, Qt::WindowFlags f)
 
 void LCDWidget::mousePressEvent(QMouseEvent *event)
 {
-    the_qml_bridge->setTouchpadState((qreal)event->x() / width(), (qreal)event->y() / height(), true, event->button() == Qt::RightButton);
+    touch_x = qBound<qreal>(0.0, static_cast<qreal>(event->x()) / width(), 1.0);
+    touch_y = qBound<qreal>(0.0, static_cast<qreal>(event->y()) / height(), 1.0);
+    touch_contact = true;
+    touch_down = event->button() == Qt::RightButton;
+    the_qml_bridge->setTouchpadState(touch_x, touch_y, touch_contact, touch_down);
 }
 
 void LCDWidget::mouseReleaseEvent(QMouseEvent *event)
 {
+    touch_x = qBound<qreal>(0.0, static_cast<qreal>(event->x()) / width(), 1.0);
+    touch_y = qBound<qreal>(0.0, static_cast<qreal>(event->y()) / height(), 1.0);
     if(event->button() == Qt::RightButton)
-        keypad.touchpad_down = keypad.touchpad_contact = false;
+        touch_down = touch_contact = false;
     else
-        keypad.touchpad_contact = false;
-
-    the_qml_bridge->touchpadStateChanged();
-    keypad.kpc.gpio_int_active |= 0x800;
-    keypad_int_check();
+        touch_contact = false;
+    the_qml_bridge->setTouchpadState(touch_x, touch_y, touch_contact, touch_down);
 }
 
 void LCDWidget::mouseMoveEvent(QMouseEvent *event)
 {
-    the_qml_bridge->setTouchpadState((qreal)event->x() / width(), (qreal)event->y() / height(), keypad.touchpad_contact, keypad.touchpad_down);
+    touch_x = qBound<qreal>(0.0, static_cast<qreal>(event->x()) / width(), 1.0);
+    touch_y = qBound<qreal>(0.0, static_cast<qreal>(event->y()) / height(), 1.0);
+    the_qml_bridge->setTouchpadState(touch_x, touch_y, touch_contact, touch_down);
 }
 
 void LCDWidget::showEvent(QShowEvent *e)

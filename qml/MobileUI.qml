@@ -113,6 +113,29 @@ ApplicationWindow {
         }
     }
 
+    Rectangle {
+        id: macroStatusBanner
+        z: 2
+        visible: Emu.keypadMacroRecording || Emu.keypadMacroPlaying
+        color: Emu.keypadMacroRecording ? "#d08020" : "#2878a8"
+        radius: 4
+        height: macroStatusText.implicitHeight + 12
+        width: Math.min(parent.width - 16, macroStatusText.implicitWidth + 20)
+        anchors.top: parent.top
+        anchors.topMargin: 8
+        anchors.horizontalCenter: parent.horizontalCenter
+
+        FBLabel {
+            id: macroStatusText
+            anchors.centerIn: parent
+            color: "white"
+            font.bold: true
+            text: Emu.keypadMacroRecording
+                  ? qsTr("Recording: %1").arg(Emu.activeKeypadMacroName)
+                  : qsTr("Playing: %1").arg(Emu.activeKeypadMacroName)
+        }
+    }
+
     Toast {
         id: toast
         x: 60

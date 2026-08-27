@@ -442,6 +442,11 @@
       <string>Language</string>
      </property>
     </widget>
+    <widget class="QMenu" name="menuKeypadMacros">
+     <property name="title">
+      <string>Keypad Macros</string>
+     </property>
+    </widget>
     <addaction name="actionScreenshot"/>
     <addaction name="actionRecord_GIF"/>
     <addaction name="actionConnect"/>
@@ -453,6 +458,7 @@
     <addaction name="actionXModem"/>
     <addaction name="actionLeavePTT"/>
     <addaction name="actionSwitch_to_Mobile_UI"/>
+    <addaction name="menuKeypadMacros"/>
     <addaction name="separator"/>
     <addaction name="menuLanguage"/>
    </widget>

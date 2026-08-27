@@ -199,6 +199,7 @@ void EmuThread::toggleTurbo()
 
 void EmuThread::enterDebugger()
 {
+    emit inputStateInvalidated();
     enter_debugger = true;
 }
 
@@ -210,6 +211,8 @@ void EmuThread::debuggerInput(QString str)
 
 void EmuThread::setPaused(bool paused)
 {
+    if(paused)
+        emit inputStateInvalidated();
     this->is_paused = paused;
     emit this->paused(paused);
 }
@@ -218,6 +221,7 @@ bool EmuThread::stop()
 {
     if(!isRunning())
         return true;
+    emit inputStateInvalidated();
 
     exiting = true;
     setPaused(false);
@@ -239,6 +243,7 @@ bool EmuThread::stop()
 
 void EmuThread::reset()
 {
+    emit inputStateInvalidated();
     usblink_queue_reset();
 
     cpu_events |= EVENT_RESET;
@@ -246,6 +251,7 @@ void EmuThread::reset()
 
 bool EmuThread::resume(QString path)
 {
+    emit inputStateInvalidated();
     snapshot_path = QDir::toNativeSeparators(path).toStdString();
     do_resume = true;
     if(!stop())
@@ -257,6 +263,7 @@ bool EmuThread::resume(QString path)
 
 void EmuThread::suspend(QString path)
 {
+    emit inputStateInvalidated();
     snapshot_path = QDir::toNativeSeparators(path).toStdString();
     do_suspend = true;
 }

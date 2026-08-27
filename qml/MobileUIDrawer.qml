@@ -1,6 +1,8 @@
 import QtQuick 2.0
 import QtQuick.Dialogs 1.1
 import QtQuick.Layouts 1.0
+import QtQuick.Controls 1.0
+import QtQml 2.1
 
 import Firebird.Emu 1.0
 import Firebird.UIComponents 1.0
@@ -14,9 +16,16 @@ Rectangle {
         listView.closeDrawer();
     }
 
+    Flickable {
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: layout.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+
     ColumnLayout {
         id: layout
-        anchors.fill: parent
+        width: parent.width
         spacing: 5
 
         Image {
@@ -116,6 +125,47 @@ Rectangle {
                 }
             }
 
+            DrawerButton {
+                id: macroButton
+
+                disabled: Emu.keypadMacroRecording ||
+                          (!Emu.keypadMacroPlaying &&
+                           (!Emu.isRunning || Emu.keypadMacros.rowCount() === 0))
+                title: Emu.keypadMacroPlaying
+                       ? qsTr("Stop Keypad Macro")
+                       : Emu.keypadMacroRecording
+                         ? qsTr("Recording: %1").arg(Emu.activeKeypadMacroName)
+                         : qsTr("Keypad Macros")
+                icon: "qrc:/icons/resources/icons/preferences-desktop-keyboard.png"
+
+                onClicked: {
+                    if(Emu.keypadMacroPlaying) {
+                        Emu.stopKeypadMacroPlayback();
+                        closeDrawer();
+                    } else {
+                        macroMenu.popup();
+                    }
+                }
+
+                Menu {
+                    id: macroMenu
+
+                    Instantiator {
+                        model: Emu.keypadMacros
+                        delegate: MenuItem {
+                            text: name
+                            enabled: Emu.isRunning && !Emu.keypadMacroRecording && !Emu.keypadMacroPlaying
+                            onTriggered: {
+                                Emu.playKeypadMacro(index);
+                                closeDrawer();
+                            }
+                        }
+                        onObjectAdded: macroMenu.insertItem(index, object)
+                        onObjectRemoved: macroMenu.removeItem(object)
+                    }
+                }
+            }
+
             Item {
                 Layout.minimumHeight: 60
             }
@@ -189,5 +239,6 @@ Rectangle {
                 }
             }
         }
+    }
     }
 }

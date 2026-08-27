@@ -1,24 +1,15 @@
 #include "qtkeypadbridge.h"
 
-#include <cassert>
 #include "keymap.h"
-#include "core/keypad.h"
 #include "qmlbridge.h"
 #include <QHash>
+#include <QVector>
 
 QtKeypadBridge qt_keypad_bridge;
 
-void setKeypad(unsigned int keymap_id, bool state)
-{
-    int col = keymap_id % KEYPAD_COLS, row = keymap_id / KEYPAD_COLS;
-    assert(row < KEYPAD_ROWS);
-    //assert(col < KEYPAD_COLS); Not needed.
-
-    ::keypad_set_key(row, col, state);
-    the_qml_bridge->notifyButtonStateChanged(row, col, state);
-}
 
 static QHash<int, int> pressed_keys;
+static QVector<Qt::Key> pressed_directions;
 
 void keyToKeypad(QKeyEvent *event)
 {
@@ -169,7 +160,7 @@ void keyToKeypad(QKeyEvent *event)
     // If physkey is already pressed, then this must the the release event
     if (pressed != pressed_keys.end())
     {
-        setKeypad(*pressed, false);
+        the_qml_bridge->setButtonState(*pressed, false);
         pressed_keys.erase(pressed);
     }
     else if (event->type() == QEvent::KeyPress) // But press only on the press event
@@ -178,7 +169,7 @@ void keyToKeypad(QKeyEvent *event)
 
         if (event->modifiers() & Qt::ShiftModifier && mkey == Qt::Key_Alt)
         {
-            setKeypad(keymap::shift, false);
+            the_qml_bridge->setButtonState(keymap::shift, false);
             return;
         }
 
@@ -195,7 +186,7 @@ void keyToKeypad(QKeyEvent *event)
         if (translated != QtKeyMap.end())
         {
             pressed_keys.insert(physkey, *translated);
-            setKeypad(*translated, true);
+            the_qml_bridge->setButtonState(*translated, true);
         }
     }
 }
@@ -206,37 +197,31 @@ void QtKeypadBridge::keyPressEvent(QKeyEvent *event)
     if(event->isAutoRepeat())
         return;
 
-    Qt::Key key = static_cast<Qt::Key>(event->key());
-
+    const Qt::Key key = static_cast<Qt::Key>(event->key());
+    qreal x = 0.5;
+    qreal y = 0.5;
     switch(key)
     {
     case Qt::Key_Down:
-        keypad.touchpad_x = TOUCHPAD_X_MAX / 2;
-        keypad.touchpad_y = 0;
+        y = 1.0;
         break;
     case Qt::Key_Up:
-        keypad.touchpad_x = TOUCHPAD_X_MAX / 2;
-        keypad.touchpad_y = TOUCHPAD_Y_MAX;
+        y = 0.0;
         break;
     case Qt::Key_Left:
-        keypad.touchpad_y = TOUCHPAD_Y_MAX / 2;
-        keypad.touchpad_x = 0;
+        x = 0.0;
         break;
     case Qt::Key_Right:
-        keypad.touchpad_y = TOUCHPAD_Y_MAX / 2;
-        keypad.touchpad_x = TOUCHPAD_X_MAX;
+        x = 1.0;
         break;
     default:
         keyToKeypad(event);
-
         return;
     }
 
-    keypad.touchpad_contact = keypad.touchpad_down = true;
-    the_qml_bridge->touchpadStateChanged();
-    keypad.kpc.gpio_int_active |= 0x800;
-
-    keypad_int_check();
+    pressed_directions.removeAll(key);
+    pressed_directions.append(key);
+    the_qml_bridge->setTouchpadState(x, y, true, true);
 }
 
 void QtKeypadBridge::keyReleaseEvent(QKeyEvent *event)
@@ -245,39 +230,38 @@ void QtKeypadBridge::keyReleaseEvent(QKeyEvent *event)
     if(event->isAutoRepeat())
         return;
 
-    Qt::Key key = static_cast<Qt::Key>(event->key());
-
-    switch(key)
+    const Qt::Key key = static_cast<Qt::Key>(event->key());
+    if(key != Qt::Key_Down && key != Qt::Key_Up &&
+       key != Qt::Key_Left && key != Qt::Key_Right)
     {
-    case Qt::Key_Down:
-        if(keypad.touchpad_x == TOUCHPAD_X_MAX / 2
-            && keypad.touchpad_y == 0)
-            keypad.touchpad_contact = keypad.touchpad_down = false;
-        break;
-    case Qt::Key_Up:
-        if(keypad.touchpad_x == TOUCHPAD_X_MAX / 2
-            && keypad.touchpad_y == TOUCHPAD_Y_MAX)
-            keypad.touchpad_contact = keypad.touchpad_down = false;
-        break;
-    case Qt::Key_Left:
-        if(keypad.touchpad_y == TOUCHPAD_Y_MAX / 2
-            && keypad.touchpad_x == 0)
-            keypad.touchpad_contact = keypad.touchpad_down = false;
-        break;
-    case Qt::Key_Right:
-        if(keypad.touchpad_y == TOUCHPAD_Y_MAX / 2
-            && keypad.touchpad_x == TOUCHPAD_X_MAX)
-            keypad.touchpad_contact = keypad.touchpad_down = false;
-        break;
-    default:
         keyToKeypad(event);
-
         return;
     }
 
-    the_qml_bridge->touchpadStateChanged();
-    keypad.kpc.gpio_int_active |= 0x800;
-    keypad_int_check();
+    pressed_directions.removeAll(key);
+    if(pressed_directions.isEmpty())
+    {
+        the_qml_bridge->setTouchpadState(0.5, 0.5, false, false);
+        return;
+    }
+
+    switch(pressed_directions.constLast())
+    {
+    case Qt::Key_Down:
+        the_qml_bridge->setTouchpadState(0.5, 1.0, true, true);
+        break;
+    case Qt::Key_Up:
+        the_qml_bridge->setTouchpadState(0.5, 0.0, true, true);
+        break;
+    case Qt::Key_Left:
+        the_qml_bridge->setTouchpadState(0.0, 0.5, true, true);
+        break;
+    case Qt::Key_Right:
+        the_qml_bridge->setTouchpadState(1.0, 0.5, true, true);
+        break;
+    default:
+        Q_UNREACHABLE();
+    }
 }
 
 bool QtKeypadBridge::eventFilter(QObject *obj, QEvent *event)
@@ -292,9 +276,10 @@ bool QtKeypadBridge::eventFilter(QObject *obj, QEvent *event)
     {
         // Release all keys on focus change
         for(auto calc_key : pressed_keys)
-            setKeypad(calc_key, false);
-
+            the_qml_bridge->setButtonState(calc_key, false);
         pressed_keys.clear();
+        pressed_directions.clear();
+        the_qml_bridge->setTouchpadState(0.5, 0.5, false, false);
         return false;
     }
     else

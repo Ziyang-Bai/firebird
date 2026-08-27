@@ -7,6 +7,11 @@ ListModel {
         file: "qrc:/qml/qml/ConfigPageKits.qml"
     }
     ListElement {
+        title: QT_TR_NOOP("Keypad Macros")
+        icon: "qrc:/icons/resources/icons/preferences-desktop-keyboard.png"
+        file: "qrc:/qml/qml/ConfigPageMacros.qml"
+    }
+    ListElement {
         title: QT_TR_NOOP("Emulation")
         icon: "qrc:/icons/resources/icons/flash-create.png"
         file: "qrc:/qml/qml/ConfigPageEmulation.qml"

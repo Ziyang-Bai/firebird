@@ -68,6 +68,8 @@ public slots:
     void setExtLCD(bool state);
     void xmodemSend();
     void switchToMobileUI();
+    void refillKeypadMacroMenu();
+    void updateKeypadMacroStatus();
 
     //Menu "State"
     bool resume();
@@ -146,6 +148,7 @@ private:
 
     // Used to show a status message permanently
     QLabel status_label;
+    QLabel keypad_macro_status_label;
 
     QSettings *settings = nullptr;
 

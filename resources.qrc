@@ -43,6 +43,7 @@
         <file>qml/ConfigPageDebug.qml</file>
         <file>qml/Firebird/UIComponents/ConfigPages.qml</file>
         <file>qml/ConfigPageKits.qml</file>
+        <file>qml/ConfigPageMacros.qml</file>
         <file>qml/Firebird/UIComponents/KitItem.qml</file>
         <file>qml/Firebird/UIComponents/KitList.qml</file>
         <file>qml/Firebird/UIComponents/FBLabel.qml</file>
@@ -65,6 +66,8 @@
         <file>i18n/de_DE.qm</file>
         <file>i18n/fr_FR.qm</file>
         <file>i18n/pl_PL.qm</file>
+        <file>i18n/zh_CN.qm</file>
+        <file>i18n/zh_HK.qm</file>
     </qresource>
     <qresource prefix="/keyimages">
         <file>resources/keyimages/questionmark.png</file>

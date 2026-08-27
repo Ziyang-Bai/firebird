@@ -28,6 +28,10 @@ signals:
 
 private:
     QTimer refresh_timer;
+    qreal touch_x = 0.0;
+    qreal touch_y = 0.0;
+    bool touch_contact = false;
+    bool touch_down = false;
 };
 
 #endif // LCDWIDGET_H

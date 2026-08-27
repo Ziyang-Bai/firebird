@@ -11,6 +11,7 @@ Rectangle {
     // Pressing the right mouse button "locks" the button in enabled state
     property bool fixed: false
     property int keymap_id: 1
+    property bool syncingFromEmu: false
 
     signal clicked()
 
@@ -26,14 +27,18 @@ Rectangle {
         if(!pressed)
             fixed = false;
 
-        Emu.setButtonState(keymap_id, pressed);
+        if(!syncingFromEmu)
+            Emu.setButtonState(keymap_id, pressed);
     }
 
     Connections {
         target: Emu
         function onButtonStateChanged(id, state) {
-            if(id === keymap_id)
+            if(id === keymap_id) {
+                syncingFromEmu = true;
                 pressed = state;
+                syncingFromEmu = false;
+            }
         }
     }
 
