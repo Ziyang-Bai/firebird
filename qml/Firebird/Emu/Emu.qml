@@ -9,7 +9,7 @@ QtObject {
     property bool running: false
     property bool isRunning: false
     property bool leftHanded: false
-    property string version: "1.6"
+    property string version: "1.7"
     property var keypadMacros: ListModel {
         function rowCount() { return count; }
         function getDataRow(row, role) { return undefined; }
